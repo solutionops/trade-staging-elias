@@ -87,6 +87,12 @@ def build_html_table(model_data: dict, last_close_excel: float, prev_close_excel
     return "\n".join(html)
 
 
+def build_model_section(title: str, model_data: dict, last_close_excel: float, prev_close_excel: float, days_ahead: int = 5) -> str:
+    section = [f"<h3 style='margin-top:18px'>{title}</h3>"]
+    section.append(build_html_table(model_data, last_close_excel, prev_close_excel, days_ahead))
+    return "\n".join(section)
+
+
 def send_email(subject: str, html_body: str) -> None:
     smtp_host = os.getenv('SMTP_HOST', '')
     smtp_port = int(os.getenv('SMTP_PORT', '0') or '0')
@@ -137,29 +143,36 @@ def main():
     used_tickers: list[str] = []
 
     for ticker in tickers:
-        # Ejecutar getData.py por ticker para refrescar datos/predicciones (recalibración incluida)
-        try:
-            subprocess.run(
-                ['python', 'getData.py', ticker, model_type],
-                cwd=os.path.dirname(os.path.abspath(__file__)),
-                check=True
-            )
-        except subprocess.CalledProcessError as e:
-            sections.append(f"<p><b>{ticker}:</b> Error al generar predicción ({e})</p>")
-            continue
-
-        prediction_path = os.path.join(data_dir, 'model_prediction.json')
-        try:
-            model_data = load_prediction(prediction_path)
-        except Exception as e:
-            sections.append(f"<p><b>{ticker}:</b> No se pudo leer la predicción ({e})</p>
-")
-            continue
-
+        # Sección por ticker con ambos modelos
+        per_ticker_sections: list[str] = [f"<h2 style='margin-top:24px'>Ticker: {ticker}</h2>"]
         last_close_excel, prev_close_excel = load_last_prices(excel_path)
-        section_html = build_html_table(model_data, last_close_excel, prev_close_excel, days_ahead=5)
-        sections.append(section_html)
-        used_tickers.append(ticker)
+        prediction_path = os.path.join(data_dir, 'model_prediction.json')
+
+        for model_type in ("polynomial", "neuralnetwork"):
+            try:
+                subprocess.run(
+                    ['python', 'getData.py', ticker, model_type],
+                    cwd=os.path.dirname(os.path.abspath(__file__)),
+                    check=True
+                )
+            except subprocess.CalledProcessError as e:
+                per_ticker_sections.append(f"<p><b>{model_type}:</b> Error al generar predicción ({e})</p>")
+                continue
+
+            try:
+                model_data = load_prediction(prediction_path)
+            except Exception as e:
+                per_ticker_sections.append(f"<p><b>{model_type}:</b> No se pudo leer la predicción ({e})</p>")
+                continue
+
+            title = "Modelo: Polynomial Regression" if model_type == "polynomial" else "Modelo: Neural Network (MLP)"
+            per_ticker_sections.append(
+                build_model_section(title, model_data, last_close_excel, prev_close_excel, days_ahead=5)
+            )
+
+        if len(per_ticker_sections) > 1:
+            sections.append("<div>" + "\n".join(per_ticker_sections) + "</div>")
+            used_tickers.append(ticker)
 
     # Armar correo final
     now_local = datetime.now().strftime('%Y-%m-%d %H:%M')
