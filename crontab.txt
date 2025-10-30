@@ -1,0 +1,3 @@
+# Ejecutar a las 05:00 hora de Chile (ver TZ en Dockerfile)
+0 5 * * * cd /app && /usr/local/bin/python getData.py >> /var/log/cron.log 2>&1 && /usr/local/bin/python email_report.py >> /var/log/cron.log 2>&1
+
