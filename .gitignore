@@ -1,0 +1,31 @@
+# Entorno virtual
+venv/
+env/
+ENV/
+
+# Archivos generados
+*.xlsx
+*.json
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Datos y modelos
+stock_data.xlsx
+model_prediction.json
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
