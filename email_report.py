@@ -55,8 +55,9 @@ def build_html_table(model_data: dict, last_close_excel: float, prev_close_excel
 
     html = []
     html.append(f"<h2>Reporte de Proyección - {ticker_name} ({ticker})</h2>")
+    r2_display = f"{r2_score:.4f}" if isinstance(r2_score, (float, int)) else "N/D"
     html.append(f"<p><b>Modelo:</b> {('Neural Network (MLP)' if model_type=='neuralnetwork' else 'Polynomial Regression')} | "
-                f"<b>R²:</b> {r2_score:.4f if isinstance(r2_score, (float, int)) else 'N/D'}</p>")
+                f"<b>R²:</b> {r2_display}</p>")
 
     html.append("<table border=1 cellspacing=0 cellpadding=6 style='border-collapse:collapse;font-family:Arial,sans-serif'>")
     html.append("<thead><tr style='background:#f0f3f7'>"
