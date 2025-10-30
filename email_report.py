@@ -7,6 +7,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 import pandas as pd
+import subprocess
 
 
 def load_prediction(path: str) -> dict:
@@ -28,7 +29,7 @@ def load_last_prices(excel_path: str) -> tuple[float, float]:
     return last_close, prev_close
 
 
-def build_html_table(model_data: dict, last_close_excel: float, prev_close_excel: float) -> str:
+def build_html_table(model_data: dict, last_close_excel: float, prev_close_excel: float, days_ahead: int = 5) -> str:
     ticker = model_data.get('ticker', 'N/A')
     ticker_name = model_data.get('ticker_name', ticker)
     model_type = model_data.get('model_type', 'polynomial')
@@ -68,22 +69,19 @@ def build_html_table(model_data: dict, last_close_excel: float, prev_close_excel
     html.append("</tbody></table><br>")
 
     # Tabla de proyecciones
-    html.append("<h3>Proyecciones</h3>")
+    html.append("<h3>Proyecciones (próximos días)</h3>")
     html.append("<table border=1 cellspacing=0 cellpadding=6 style='border-collapse:collapse;font-family:Arial,sans-serif'>")
     html.append("<thead><tr style='background:#f0f3f7'>"
                 "<th>Día</th><th>Apertura</th><th>Mínimo</th><th>Máximo</th><th>Cierre</th></tr></thead><tbody>")
-    if next_day:
-        html.append(f"<tr><td>Próximo ({fmt_date(next_day.get('date'))})</td>"
-                    f"<td>{fmt(next_day.get('open'))}</td>"
-                    f"<td>{fmt(next_day.get('low'))}</td>"
-                    f"<td>{fmt(next_day.get('high'))}</td>"
-                    f"<td>{fmt(next_day.get('close'))}</td></tr>")
-    if final_day and final_day is not next_day:
-        html.append(f"<tr><td>Final ({fmt_date(final_day.get('date'))})</td>"
-                    f"<td>{fmt(final_day.get('open'))}</td>"
-                    f"<td>{fmt(final_day.get('low'))}</td>"
-                    f"<td>{fmt(final_day.get('high'))}</td>"
-                    f"<td>{fmt(final_day.get('close'))}</td></tr>")
+    # Listado de los próximos N días (por defecto 5)
+    for entry in prediction_data[:max(0, days_ahead)]:
+        html.append(
+            f"<tr><td>{fmt_date(entry.get('date'))}</td>"
+            f"<td>{fmt(entry.get('open'))}</td>"
+            f"<td>{fmt(entry.get('low'))}</td>"
+            f"<td>{fmt(entry.get('high'))}</td>"
+            f"<td>{fmt(entry.get('close'))}</td></tr>"
+        )
     html.append("</tbody></table>")
 
     return "\n".join(html)
@@ -129,16 +127,44 @@ def send_email(subject: str, html_body: str) -> None:
 
 def main():
     data_dir = os.getenv('DATA_DIR', 'data')
-    prediction_path = os.path.join(data_dir, 'model_prediction.json')
     excel_path = os.path.join(data_dir, 'stock_data.xlsx')
+    model_type = os.getenv('MODEL_TYPE', 'polynomial').lower()
+    # Tickers por defecto: INTC, ORCL, NVDA, AMZN
+    tickers_env = os.getenv('TICKERS', 'INTC,ORCL,NVDA,AMZN')
+    tickers = [t.strip().upper() for t in tickers_env.split(',') if t.strip()]
 
-    model_data = load_prediction(prediction_path)
-    last_close_excel, prev_close_excel = load_last_prices(excel_path)
+    sections: list[str] = []
+    used_tickers: list[str] = []
 
-    html_body = build_html_table(model_data, last_close_excel, prev_close_excel)
-    ticker = model_data.get('ticker', 'N/A')
+    for ticker in tickers:
+        # Ejecutar getData.py por ticker para refrescar datos/predicciones (recalibración incluida)
+        try:
+            subprocess.run(
+                ['python', 'getData.py', ticker, model_type],
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            sections.append(f"<p><b>{ticker}:</b> Error al generar predicción ({e})</p>")
+            continue
+
+        prediction_path = os.path.join(data_dir, 'model_prediction.json')
+        try:
+            model_data = load_prediction(prediction_path)
+        except Exception as e:
+            sections.append(f"<p><b>{ticker}:</b> No se pudo leer la predicción ({e})</p>
+")
+            continue
+
+        last_close_excel, prev_close_excel = load_last_prices(excel_path)
+        section_html = build_html_table(model_data, last_close_excel, prev_close_excel, days_ahead=5)
+        sections.append(section_html)
+        used_tickers.append(ticker)
+
+    # Armar correo final
     now_local = datetime.now().strftime('%Y-%m-%d %H:%M')
-    subject = f"Proyección {ticker} - {now_local}"
+    subject = f"Proyecciones ({', '.join(used_tickers)}) - {now_local}" if used_tickers else f"Proyecciones - {now_local}"
+    html_body = "<br><hr><br>".join(sections) if sections else "<p>No fue posible generar el reporte.</p>"
 
     send_email(subject, html_body)
     print("Correo enviado correctamente")
