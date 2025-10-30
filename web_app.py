@@ -285,6 +285,10 @@ HTML_TEMPLATE = """
                     <option value="NVDA">NVIDIA (NVDA)</option>
                     <option value="MELI">MercadoLibre (MELI)</option>
                 </select>
+                <select id="modelSelect" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: white;">
+                    <option value="polynomial">Polynomial Regression</option>
+                    <option value="neuralnetwork">Neural Network (MLP)</option>
+                </select>
                 <button onclick="updateData()">🔄 Actualizar Datos</button>
                 <button onclick="downloadExcel()">📥 Descargar Excel</button>
             </div>
@@ -336,9 +340,10 @@ HTML_TEMPLATE = """
                     document.getElementById('error').style.display = 'none';
                     document.getElementById('content').style.display = 'block';
                     
-                    // Actualizar título
+                    // Actualizar título con modelo
+                    const modelName = data.model_type === 'neuralnetwork' ? 'Neural Network (MLP)' : 'Polynomial Regression';
                     document.getElementById('subtitle').textContent = 
-                        `${data.ticker_name || 'Empresa'} (${data.ticker || 'N/A'})`;
+                        `${data.ticker_name || 'Empresa'} (${data.ticker || 'N/A'}) - Modelo: ${modelName}`;
                     
                     // Mostrar el gráfico
                     document.getElementById('chart').src = 'data:image/png;base64,' + data.image_base64;
@@ -480,6 +485,7 @@ HTML_TEMPLATE = """
         
         function updateData() {
             const ticker = document.getElementById('tickerSelect').value;
+            const modelType = document.getElementById('modelSelect').value;
             document.getElementById('loading').style.display = 'block';
             document.getElementById('content').style.display = 'none';
             document.getElementById('successMessage').style.display = 'none';
@@ -489,7 +495,7 @@ HTML_TEMPLATE = """
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ ticker: ticker })
+                body: JSON.stringify({ ticker: ticker, model_type: modelType })
             })
             .then(response => response.json())
             .then(data => {
@@ -527,8 +533,13 @@ def index():
 @app.route('/api/data')
 def get_data():
     try:
-        if os.path.exists('model_prediction.json'):
-            with open('model_prediction.json', 'r') as f:
+        # Buscar en directorio data/ si existe (para Docker)
+        json_file = 'model_prediction.json'
+        if os.path.exists('data'):
+            json_file = os.path.join('data', 'model_prediction.json')
+        
+        if os.path.exists(json_file):
+            with open(json_file, 'r') as f:
                 data = json.load(f)
             return jsonify(data)
         else:
@@ -541,34 +552,48 @@ def update_data():
     try:
         data = request.json
         ticker = data.get('ticker', 'INTC')
+        model_type = data.get('model_type', 'polynomial')
         
-        # Ejecutar getData.py con el ticker seleccionado
+        print(f"Actualizando datos para {ticker} con modelo {model_type}")
+        
+        # Ejecutar getData.py con el ticker y modelo seleccionado
+        # stdout y stderr directamente a la consola para ver en logs de Docker
         result = subprocess.run(
-            ['python', 'getData.py', ticker],
-            capture_output=True,
-            text=True,
+            ['python', 'getData.py', ticker, model_type],
             cwd=os.path.dirname(os.path.abspath(__file__))
         )
         
         if result.returncode == 0:
+            print(f"Datos actualizados correctamente para {ticker}")
             return jsonify({'success': True, 'message': 'Datos actualizados correctamente'})
         else:
-            return jsonify({'success': False, 'error': result.stderr})
+            print(f"Error al actualizar datos: código {result.returncode}")
+            return jsonify({'success': False, 'error': f'Error al ejecutar getData.py: código {result.returncode}'})
     
     except Exception as e:
+        print(f"Excepción al actualizar datos: {e}")
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/download/excel')
 def download_excel():
-    if os.path.exists('stock_data.xlsx'):
-        return send_file('stock_data.xlsx', as_attachment=True)
+    # Buscar en directorio data/ si existe (para Docker)
+    excel_file = 'stock_data.xlsx'
+    if os.path.exists('data'):
+        excel_file = os.path.join('data', 'stock_data.xlsx')
+    
+    if os.path.exists(excel_file):
+        return send_file(excel_file, as_attachment=True)
     else:
         return "Archivo Excel no encontrado", 404
 
 if __name__ == '__main__':
+    import os
+    host = os.getenv('HOST', '0.0.0.0')
+    port = int(os.getenv('PORT', 5000))
+    
     print("=" * 60)
     print("Servidor web iniciado")
     print("=" * 60)
-    print("Accede a: http://127.0.0.1:8080")
+    print(f"Accede a: http://{host}:{port}")
     print("=" * 60)
-    app.run(debug=True, host='127.0.0.1', port=8080)
+    app.run(debug=False, host=host, port=port)

@@ -1,0 +1,49 @@
+# Dockerignore file
+
+# Entorno virtual
+venv/
+env/
+ENV/
+
+# Archivos generados
+*.xlsx
+*.json
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Datos y modelos (se generarán en runtime)
+stock_data.xlsx
+model_prediction.json
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Documentación (opcional)
+*.md
+
+# Backups
+*_backup*.py
+getData_backup.py
+getData_backup2.py

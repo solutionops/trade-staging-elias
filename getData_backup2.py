@@ -59,11 +59,6 @@ def save_to_excel(data, filename="stock_data.xlsx"):
     """
     Guarda los datos en un archivo Excel
     """
-    import os
-    # Usar directorio data/ si existe (para Docker)
-    if os.path.exists('data'):
-        filename = os.path.join('data', filename)
-    
     # Remover timezone si existe para compatibilidad con Excel
     data_copy = data.copy()
     if data_copy.index.tz is not None:
@@ -121,7 +116,7 @@ def train_mlp_model(data):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_features)
     
-    # Entrenar MLP con regularización para evitar sobreajuste
+    # Entrenar MLP
     mlp = MLPRegressor(
         hidden_layer_sizes=(64, 32),
         activation='relu',
@@ -129,11 +124,8 @@ def train_mlp_model(data):
         max_iter=800,
         early_stopping=True,
         n_iter_no_change=20,
-        alpha=0.01,  # Regularización L2 para reducir sobreajuste
         random_state=42,
-        shuffle=False,  # Respetar orden temporal
-        validation_fraction=0.1,  # Usar 10% para validación
-        tol=1e-4  # Tolerancia para convergencia
+        shuffle=False  # Respetar orden temporal
     )
     
     mlp.fit(X_scaled, y_target)
@@ -145,75 +137,6 @@ def train_mlp_model(data):
     print(f"Modelo MLP Close - R² Score: {r2_score:.4f}")
     
     return mlp, scaler, X_scaled, y_pred_hist, feature_names
-
-def recalibrate_predictions(forecast, current_price, predicted_today):
-    """
-    Ajusta las predicciones aplicando un offset basado en el precio actual
-    
-    Args:
-        forecast: Array con predicciones futuras
-        current_price: Precio real más reciente
-        predicted_today: Valor que el modelo predijo para "hoy"
-    
-    Returns:
-        Array con predicciones ajustadas
-    """
-    offset = current_price - predicted_today
-    adjusted_forecast = forecast + offset
-    return adjusted_forecast
-
-def predict_recursive_mlp(mlp_model, scaler, data_history, n_days=30):
-    """
-    Predice n días hacia adelante usando extrapolación inteligente con suavizado
-    """
-    # Calcular tendencia histórica reciente
-    recent_data = data_history['Close'].values[-30:] if len(data_history) >= 30 else data_history['Close'].values
-    # Aplanar si es necesario
-    recent_data = recent_data.flatten() if recent_data.ndim > 1 else recent_data
-    
-    # Usar regresión lineal simple sobre los últimos datos para la tendencia
-    from sklearn.linear_model import LinearRegression as LR
-    trend_model = LR()
-    X_trend = np.arange(len(recent_data)).reshape(-1, 1)
-    trend_model.fit(X_trend, recent_data)
-    
-    # Predecir tendencia lineal
-    X_future_trend = np.arange(len(recent_data), len(recent_data) + n_days).reshape(-1, 1)
-    trend_predictions = trend_model.predict(X_future_trend)
-    
-    # Calcular volatilidad histórica para rangos High/Low
-    if isinstance(recent_data, pd.Series):
-        volatility = recent_data.pct_change().std()
-    else:
-        # Convertir a Series de pandas temporalmente
-        recent_series = pd.Series(recent_data)
-        volatility = recent_series.pct_change().std()
-    
-    # Aplicar suavizado exponencial al 90% de la tendencia + 10% del último valor
-    last_price = data_history['Close'].iloc[-1]
-    predictions_close = []
-    
-    for i, trend_pred in enumerate(trend_predictions):
-        # Combinar tendencia con último precio real con decaimiento
-        alpha = 0.7  # Factor de tendencia
-        pred = alpha * trend_pred + (1 - alpha) * last_price
-        predictions_close.append(pred)
-        last_price = pred  # Actualizar para próximo paso
-    
-    predictions_close = np.array(predictions_close)
-    
-    # Calcular High y Low basados en volatilidad relativa
-    avg_price = predictions_close.mean()
-    volatility_abs = volatility * avg_price if volatility < 1 else volatility
-    
-    predictions_high = predictions_close + volatility_abs * 1.5
-    predictions_low = predictions_close - volatility_abs * 1.5
-    
-    return {
-        'Close': predictions_close,
-        'High': predictions_high,
-        'Low': predictions_low
-    }
 
 def train_polynomial_model(data, degree=3):
     """
@@ -295,11 +218,10 @@ def generate_future_dates(start_date, num_intervals, freq="1D"):
     
     return pd.date_range(start=start_date, end=end_date, freq=freq)[:num_intervals]
 
-def create_plot(data, predictions_hist, future_dates, predictions_future, ticker="INTC", model_type="polynomial"):
+def create_plot(data, predictions_hist, future_dates, predictions_future, ticker="INTC"):
     """
     Crea un gráfico con los datos históricos, el ajuste del modelo y las predicciones futuras
     """
-    model_name = "Neural Network (MLP)" if model_type == "neuralnetwork" else "Polynomial Regression"
     plt.figure(figsize=(20, 10))
     
     # Datos históricos reales
@@ -307,11 +229,11 @@ def create_plot(data, predictions_hist, future_dates, predictions_future, ticker
              linewidth=2, color='blue', alpha=0.7)
     
     # Ajuste del modelo para Close
-    plt.plot(data.index, predictions_hist['Close'], label=f'Modelo Close ({model_name})', 
+    plt.plot(data.index, predictions_hist['Close'], label='Modelo Close (Regresión Polinomial)', 
              linewidth=2, color='red', linestyle='--', alpha=0.8)
     
     # Predicciones futuras para Close
-    plt.plot(future_dates, predictions_future['Close'], label='Predicción Close Próximo Mes (Recalibrada)', 
+    plt.plot(future_dates, predictions_future['Close'], label='Predicción Close Próximo Mes', 
              linewidth=2, color='green', alpha=0.8)
     
     # Predicciones futuras para High (máximo del día)
@@ -360,7 +282,7 @@ def create_plot(data, predictions_hist, future_dates, predictions_future, ticker
     
     plt.xlabel('Fecha', fontsize=12, fontweight='bold')
     plt.ylabel('Precio (USD)', fontsize=12, fontweight='bold')
-    plt.title(f'{ticker} - Modelo: {model_name} | Predicción del Próximo Mes\nIntervalo: Diario (1 año histórico)', 
+    plt.title(f'{ticker} - Análisis con Regresión Polinomial y Predicción del Próximo Mes\nIntervalo: Diario (1 año histórico)', 
               fontsize=14, fontweight='bold')
     plt.legend(loc='best', fontsize=10)
     plt.grid(True, alpha=0.3)
@@ -389,13 +311,9 @@ def get_ticker_name(ticker_symbol):
     }
     return ticker_names.get(ticker_symbol, ticker_symbol)
 
-def main(ticker="INTC", model_type="polynomial"):
+def main(ticker="INTC"):
     """
     Función principal que ejecuta todo el pipeline
-    
-    Args:
-        ticker: Símbolo de la acción
-        model_type: Tipo de modelo ('polynomial' o 'neuralnetwork')
     """
     # 1. Obtener datos históricos
     print("=" * 60)
@@ -409,110 +327,90 @@ def main(ticker="INTC", model_type="polynomial"):
     print("=" * 60)
     save_to_excel(data, "stock_data.xlsx")
     
-    # 3. Entrenar modelos según el tipo seleccionado
+    # 3. Entrenar modelos
     print("\n" + "=" * 60)
-    print(f"PASO 3: Entrenando modelo - {model_type.upper()}")
+    print("PASO 3: Entrenando modelos de regresión polinomial (Open, High, Low, Close)")
     print("=" * 60)
+    models, X, predictions_hist = train_polynomial_model(data, degree=3)
     
-    if model_type == "neuralnetwork":
-        # Entrenar MLP
-        mlp_model, scaler, X_scaled, y_pred_hist, feature_names = train_mlp_model(data)
-        
-        # Construir estructura para compatibilidad
-        predictions_hist = {'Close': np.pad(y_pred_hist, (10, 0), mode='constant', constant_values=data['Close'].iloc[0])}
-        
-        # Calcular R² correctamente
-        X_features, y_target, _ = build_features(data)
-        r2_score = mlp_model.score(scaler.transform(X_features), y_target)
-        
-        # Usar predicción recursiva para MLP
-        predictions_future = predict_recursive_mlp(mlp_model, scaler, data, n_days=30)
-        
-    else:
-        # Entrenar Polynomial (default)
-        models, X, predictions_hist = train_polynomial_model(data, degree=3)
-        r2_score = models['Close'].score(X, data['Close'].values)
-        
-        interval = "1d"
-        X_future, predictions_future = predict_next_month(models, len(data), interval=interval)
+    # 4. Predecir próximo mes
+    print("\n" + "=" * 60)
+    print("PASO 4: Generando predicción del próximo mes")
+    print("=" * 60)
+    interval = "1d"  # Intervalo usado (diario)
+    X_future, predictions_future = predict_next_month(models, len(data), interval=interval)
     
-    # Aplicar recalibración
-    current_price = float(data['Close'].iloc[-1])
-    predicted_today = float(predictions_hist['Close'][-1]) if len(predictions_hist['Close']) > 0 else current_price
-    
-    # Recalibrar predicciones futuras de Close
-    close_predictions = predictions_future['Close']
-    close_predictions_recalibrated = recalibrate_predictions(close_predictions, current_price, predicted_today)
-    predictions_future['Close'] = close_predictions_recalibrated
-    
-    # Generar fechas futuras
-    interval = "1d"
+    # Generar fechas futuras según el intervalo
     if interval == "1d":
-        freq = "1D"
+        freq = "1D"  # Intervalo diario
+    elif interval == "1h":
+        freq = "1h"
+    elif interval == "5m":
+        freq = "5min"
+    elif interval == "15m":
+        freq = "15min"
     else:
         freq = "1D"
     
-    future_dates = generate_future_dates(data.index[-1], len(close_predictions_recalibrated), freq=freq)
+    future_dates = generate_future_dates(data.index[-1], len(predictions_future['Close']), freq=freq)
     
-    # 4. Crear gráfico
+    # 5. Crear gráfico
     print("\n" + "=" * 60)
-    print("PASO 4: Generando gráfico")
+    print("PASO 5: Generando gráfico")
     print("=" * 60)
-    image_base64 = create_plot(data, predictions_hist, future_dates, predictions_future, ticker=ticker, model_type=model_type)
+    image_base64 = create_plot(data, predictions_hist, future_dates, predictions_future, ticker=ticker)
     
-    # 5. Guardar información del modelo para la web
-    if isinstance(close_predictions_recalibrated, np.ndarray):
-        pred_next = float(close_predictions_recalibrated.item(0)) if close_predictions_recalibrated.size > 0 else 0.0
-        pred_final = float(close_predictions_recalibrated.item(-1)) if close_predictions_recalibrated.size > 0 else 0.0
+    # 6. Guardar información del modelo para la web
+    # Convertir arrays numpy a valores escalares correctamente para Close
+    close_predictions = predictions_future['Close']
+    if isinstance(close_predictions, np.ndarray):
+        pred_next = float(close_predictions.item(0)) if close_predictions.size > 0 else 0.0
+        pred_final = float(close_predictions.item(-1)) if close_predictions.size > 0 else 0.0
     else:
-        pred_next = float(close_predictions_recalibrated[0]) if len(close_predictions_recalibrated) > 0 else 0.0
-        pred_final = float(close_predictions_recalibrated[-1]) if len(close_predictions_recalibrated) > 0 else 0.0
+        pred_next = float(close_predictions[0]) if len(close_predictions) > 0 else 0.0
+        pred_final = float(close_predictions[-1]) if len(close_predictions) > 0 else 0.0
     
-    # Guardar datos completos de predicción
+    # Guardar datos completos de predicción para consulta por fecha (incluir High, Low, Close)
     prediction_data = []
     for i, date in enumerate(future_dates):
+        day_data = {}
+        for col in ['Open', 'High', 'Low', 'Close']:
+            val = predictions_future[col][i]
+            if isinstance(val, np.ndarray):
+                day_data[col.lower()] = float(val.item())
+            else:
+                day_data[col.lower()] = float(val)
+        
         prediction_data.append({
             'date': date.strftime('%Y-%m-%d'),
-            'close': float(close_predictions_recalibrated[i]),
-            'high': float(predictions_future['High'][i]) if 'High' in predictions_future else float(close_predictions_recalibrated[i] * 1.02),
-            'low': float(predictions_future['Low'][i]) if 'Low' in predictions_future else float(close_predictions_recalibrated[i] * 0.98),
-            'open': float(close_predictions_recalibrated[i]) if i == 0 else float(close_predictions_recalibrated[i-1])
+            **day_data
         })
     
     model_data = {
         'image_base64': image_base64,
         'historical_points': len(data),
-        'predicted_points': len(close_predictions_recalibrated),
-        'last_price': current_price,
+        'predicted_points': len(close_predictions),
+        'last_price': float(data['Close'].iloc[-1]),
         'predicted_next_price': pred_next,
         'predicted_final_price': pred_final,
-        'r2_score': float(r2_score),
+        'r2_score': float(models['Close'].score(X, data['Close'].values)),
         'ticker': ticker,
         'ticker_name': get_ticker_name(ticker),
-        'model_type': model_type,
         'prediction_start_date': future_dates[0].strftime('%Y-%m-%d') if len(future_dates) > 0 else '',
         'prediction_end_date': future_dates[-1].strftime('%Y-%m-%d') if len(future_dates) > 0 else '',
-        'prediction_data': prediction_data
+        'prediction_data': prediction_data  # Datos completos para consulta por fecha (Open, High, Low, Close)
     }
     
-    import os
-    # Usar directorio data/ si existe (para Docker)
-    output_file = 'model_prediction.json'
-    if os.path.exists('data'):
-        output_file = os.path.join('data', 'model_prediction.json')
-    
-    with open(output_file, 'w') as f:
+    with open('model_prediction.json', 'w') as f:
         json.dump(model_data, f)
     
     print("\n" + "=" * 60)
     print("PROCESO COMPLETADO")
     print("=" * 60)
-    model_name_display = "Neural Network (MLP)" if model_type == "neuralnetwork" else "Polynomial Regression"
     print(f"✓ Empresa: {get_ticker_name(ticker)} ({ticker})")
-    print(f"✓ Modelo: {model_name_display}")
     print(f"✓ Precio actual: ${model_data['last_price']:.2f}")
-    print(f"✓ Predicción inicial (recalibrada): ${pred_next:.2f}")
-    print(f"✓ Predicción final (recalibrada): ${pred_final:.2f}")
+    print(f"✓ Predicción inicial: ${pred_next:.2f}")
+    print(f"✓ Predicción final: ${pred_final:.2f}")
     print(f"✓ Variación estimada: {((pred_final - model_data['last_price']) / model_data['last_price'] * 100):.2f}%")
     print(f"✓ Datos guardados en: stock_data.xlsx")
     print(f"✓ Modelo y predicción guardados en: model_prediction.json")
@@ -529,23 +427,19 @@ if __name__ == "__main__":
     
     import sys
     
-    # Permitir pasar el ticker y modelo como argumentos
+    # Permitir pasar el ticker como argumento
     ticker = "INTC"  # Default
-    model_type = "polynomial"  # Default
-    
     if len(sys.argv) > 1:
         ticker = sys.argv[1].upper()
-    if len(sys.argv) > 2:
-        model_type = sys.argv[2].lower()
     
     try:
-        main(ticker=ticker, model_type=model_type)
+        main(ticker=ticker)
     except Exception as e:
         print(f"\n❌ Error: {e}")
         print("\nSugerencias:")
         print("1. Verifica tu conexión a internet")
         print(f"2. Asegúrate de que el ticker '{ticker}' sea válido")
-        print("3. Modelos disponibles: polynomial, neuralnetwork")
-        print("4. Tickers disponibles: INTC, AMZN, ORCL, NVDA, MELI")
+        print("3. Tickers disponibles: INTC, AMZN, ORCL, NVDA, MELI")
+        print("4. Si el problema persiste, puedes cambiar el intervalo a '15m' o '1h'")
         import traceback
         traceback.print_exc()
